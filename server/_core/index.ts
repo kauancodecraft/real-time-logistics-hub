@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { initializeSimulator, startSimulator } from "../simulator";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -59,6 +60,14 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    
+    // Initialize and start the logistics simulator
+    initializeSimulator().then(() => {
+      startSimulator();
+      console.log("[Server] Logistics simulator initialized and started");
+    }).catch(err => {
+      console.error("[Server] Failed to start simulator:", err);
+    });
   });
 }
 

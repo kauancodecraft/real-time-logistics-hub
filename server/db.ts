@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, vehicles, deliveries, routes, operationalCosts, InsertVehicle, InsertDelivery, InsertRoute, InsertOperationalCost } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,217 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ===== VEHICLES QUERIES =====
+export async function createVehicle(vehicle: InsertVehicle) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(vehicles).values(vehicle);
+  return result;
+}
+
+export async function getAllVehicles() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(vehicles);
+}
+
+export async function getVehicleById(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.select().from(vehicles).where(eq(vehicles.id, id));
+  return result[0];
+}
+
+export async function updateVehicleStatus(id: number, status: string, latitude?: string, longitude?: string, region?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updates: Record<string, any> = { status, updatedAt: new Date() };
+  if (latitude) updates.currentLatitude = latitude;
+  if (longitude) updates.currentLongitude = longitude;
+  if (region) updates.currentRegion = region;
+  return await db.update(vehicles).set(updates).where(eq(vehicles.id, id));
+}
+
+// ===== DELIVERIES QUERIES =====
+export async function createDelivery(delivery: InsertDelivery) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(deliveries).values(delivery);
+}
+
+export async function getAllDeliveries() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(deliveries).orderBy(desc(deliveries.createdAt));
+}
+
+export async function getDeliveriesByStatus(status: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(deliveries).where(eq(deliveries.status, status as any));
+}
+
+export async function getDeliveriesByRegion(region: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(deliveries).where(eq(deliveries.region, region));
+}
+
+export async function updateDeliveryStatus(id: number, status: string, actualDeliveryDate?: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updates: Record<string, any> = { status, updatedAt: new Date() };
+  if (actualDeliveryDate) updates.actualDeliveryDate = actualDeliveryDate;
+  return await db.update(deliveries).set(updates).where(eq(deliveries.id, id));
+}
+
+export async function getDeliveriesByDateRange(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(deliveries).where(
+    and(
+      gte(deliveries.createdAt, startDate),
+      lte(deliveries.createdAt, endDate)
+    )
+  );
+}
+
+// ===== ROUTES QUERIES =====
+export async function createRoute(route: InsertRoute) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(routes).values(route);
+}
+
+export async function getAllRoutes() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(routes).orderBy(desc(routes.createdAt));
+}
+
+export async function getRoutesByVehicle(vehicleId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(routes).where(eq(routes.vehicleId, vehicleId));
+}
+
+export async function updateRouteStatus(id: number, status: string, completedDeliveries?: number, endDate?: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updates: Record<string, any> = { status, updatedAt: new Date() };
+  if (completedDeliveries !== undefined) updates.completedDeliveries = completedDeliveries;
+  if (endDate) updates.endDate = endDate;
+  return await db.update(routes).set(updates).where(eq(routes.id, id));
+}
+
+// ===== OPERATIONAL COSTS QUERIES =====
+export async function createOperationalCost(cost: InsertOperationalCost) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.insert(operationalCosts).values(cost);
+}
+
+export async function getCostsByVehicle(vehicleId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(operationalCosts).where(eq(operationalCosts.vehicleId, vehicleId));
+}
+
+export async function getCostsByDateRange(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return await db.select().from(operationalCosts).where(
+    and(
+      gte(operationalCosts.date, startDate),
+      lte(operationalCosts.date, endDate)
+    )
+  );
+}
+
+// ===== KPI CALCULATIONS =====
+export async function calculateOTD(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const deliveredOnTime = await db.select({ count: sql<number>`COUNT(*)` })
+    .from(deliveries)
+    .where(
+      and(
+        eq(deliveries.status, "delivered" as any),
+        gte(deliveries.createdAt, startDate),
+        lte(deliveries.createdAt, endDate),
+        sql`DATE(${deliveries.actualDeliveryDate}) <= DATE(${deliveries.scheduledDeliveryDate})`
+      )
+    );
+  
+  const totalDelivered = await db.select({ count: sql<number>`COUNT(*)` })
+    .from(deliveries)
+    .where(
+      and(
+        eq(deliveries.status, "delivered" as any),
+        gte(deliveries.createdAt, startDate),
+        lte(deliveries.createdAt, endDate)
+      )
+    );
+  
+  const onTimeCount = deliveredOnTime[0]?.count || 0;
+  const totalCount = totalDelivered[0]?.count || 1;
+  
+  return (onTimeCount / totalCount) * 100;
+}
+
+export async function calculateAverageDeliveryTime(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.select({
+    avgTime: sql<number>`AVG(TIMESTAMPDIFF(HOUR, ${deliveries.createdAt}, ${deliveries.actualDeliveryDate}))`
+  })
+  .from(deliveries)
+  .where(
+    and(
+      eq(deliveries.status, "delivered" as any),
+      gte(deliveries.createdAt, startDate),
+      lte(deliveries.createdAt, endDate)
+    )
+  );
+  
+  return result[0]?.avgTime || 0;
+}
+
+export async function calculateTotalRevenue(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.select({
+    total: sql<number>`SUM(${deliveries.value})`
+  })
+  .from(deliveries)
+  .where(
+    and(
+      eq(deliveries.status, "delivered" as any),
+      gte(deliveries.createdAt, startDate),
+      lte(deliveries.createdAt, endDate)
+    )
+  );
+  
+  return parseFloat(result[0]?.total?.toString() || "0");
+}
+
+export async function calculateTotalOperationalCosts(startDate: Date, endDate: Date) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.select({
+    total: sql<number>`SUM(${operationalCosts.amount})`
+  })
+  .from(operationalCosts)
+  .where(
+    and(
+      gte(operationalCosts.date, startDate),
+      lte(operationalCosts.date, endDate)
+    )
+  );
+  
+  return parseFloat(result[0]?.total?.toString() || "0");
+}
